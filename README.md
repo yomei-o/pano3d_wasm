@@ -57,7 +57,15 @@ Drag to look around, WASD to move, Q/E to go down/up, mouse wheel to change spee
 
 ## Sample data
 
-`aist_living_lab_1` from the stella_vslam tutorial: RICOH THETA S, 1920×960 equirect, 136 s.
+AIST 360° sequences published with the stella_vslam tutorial (RICOH THETA S, 1920×960 equirect). Fetch them with `scriptsetch_aist.ps1 <name> ...`. Results on the build machine (RTX 3090):
+
+| Sequence | Frames (3 fps) | Registered | Dense stride | PatchMatch | Fused → filtered + voxelised |
+|---|---|---|---|---|---|
+| aist_living_lab_1 (2:16) | 408 | 408 | 4 | 54 min | 3.41M → 2.34M |
+| aist_entrance_hall_1 (0:54) | 162 | 162 | 3 | 34 min | 3.00M → 1.79M |
+| aist_stairs_A_1 (2:27) | 441 | 440 | 4 | 44 min | 2.34M → 1.46M |
+
+SfM itself (extract, match, global mapper) takes about 5–8 minutes per sequence.
 
 ## License
 
