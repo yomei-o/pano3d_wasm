@@ -40,6 +40,8 @@ viewer    [C++ → wasm]  software point splatting + EDL, on a 2D canvas
 ## Running (on the build machine, from C:\prog\pano3d)
 
 ```bat
+powershell -File scripts\setup_colmap.ps1  :: COLMAP 4.2.1 (CUDA), SHA256-checked, into colmap\
+powershell -File scripts\setup_emsdk.ps1   :: emsdk into C:\prog\emsdk
 scripts\build_tools.bat                 :: MSVC: pano2rig / ply2scene / render_png
 scripts\build_wasm.bat                  :: emsdk: dist\viewer.{js,wasm}, index.html
 powershell -File scripts\run_sfm.ps1   -Video data\x\video.mp4 -Work work\x  [-VR180]
