@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
   else p3d::track_camera(scene, track, cam);
   p3d::Renderer r;
   r.resize(w, h);
+  if (top) r.clip_y = p3d::ceiling_clip(scene);
   r.render(scene, cam);
   if (bench > 0) {
     const auto t0 = std::chrono::steady_clock::now();

@@ -11,9 +11,10 @@ try {
   $edge = "${env:ProgramFiles(x86)}/Microsoft/Edge/Application/msedge.exe"
   $ErrorActionPreference = "Continue"  # Edge logs to stderr
   $prof = Join-Path $env:TEMP "p3d_edge_profile"
+  if (Test-Path $prof) { Remove-Item -Recurse -Force $prof }  # no stale cache
   & $edge --headless=new --disable-gpu --disable-webgl --user-data-dir=$prof `
     --window-size=1280,720 --virtual-time-budget=8000 `
-    --screenshot=$((Join-Path (Get-Location) $Out)) "http://127.0.0.1:$Port/index.html" 2>&1 | Out-Null
+    --screenshot=$((Join-Path (Get-Location) $Out)) "http://127.0.0.1:${Port}/index.html?full=1" 2>&1 | Out-Null
   Start-Sleep 1
   Get-Item $Out | Select-Object Name, Length
 } finally {

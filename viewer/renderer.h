@@ -3,6 +3,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace p3d {
@@ -40,8 +41,9 @@ class Renderer {
   const uint32_t* pixels() const { return color_.data(); }
   int width() const { return w_; }
   int height() const { return h_; }
-  float point_scale = 1.5f;  // multiplier on Scene::splat
+  float point_scale = 1.0f;  // multiplier on Scene::splat
   bool edl = true;           // eye-dome lighting for depth cues
+  float clip_y = std::numeric_limits<float>::infinity();  // hide points above
 
  private:
   void apply_edl();

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 
 #include "renderer.h"
 #include "view_util.h"
@@ -60,6 +61,12 @@ EMSCRIPTEN_KEEPALIVE void p3d_set_fov(float hfov) { g_cam.hfov = hfov; }
 EMSCRIPTEN_KEEPALIVE void p3d_set_point_scale(float s) { g_renderer.point_scale = s; }
 
 EMSCRIPTEN_KEEPALIVE void p3d_set_edl(int on) { g_renderer.edl = on != 0; }
+
+// Hide points above the ceiling-cut height (for looking down into rooms).
+EMSCRIPTEN_KEEPALIVE void p3d_set_ceiling_cut(int on) {
+  g_renderer.clip_y = on ? p3d::ceiling_clip(g_scene)
+                         : std::numeric_limits<float>::infinity();
+}
 
 // Renders the first `limit` points (0 = all) and returns the RGBA
 // framebuffer (width*height*4 bytes).

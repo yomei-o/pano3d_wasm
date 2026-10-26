@@ -70,15 +70,18 @@ void Renderer::render(const Scene& s, const Camera& c, size_t limit) {
   const float near = 0.02f;
   const size_t n = limit == 0 ? s.size() : std::min(limit, s.size());
   // Fewer points cover less area; widen splats by the linear density ratio.
-  const float thin = n < s.size() ? std::sqrt(float(s.size()) / float(n)) : 1.0f;
+  // Capped: fully compensating makes the moving view blocky.
+  const float thin =
+      n < s.size() ? std::min(1.5f, std::sqrt(float(s.size()) / float(n))) : 1.0f;
   const float radius_px = F * s.splat * point_scale * thin;
-  const int max_rad = std::max(2, h_ / 90);
+  const int max_rad = std::max(2, h_ / 150);
   const float* P = s.xyz.data();
 
   for (size_t i = 0; i < n; ++i) {
     const float dx = P[3 * i] - c.pos[0];
     const float dy = P[3 * i + 1] - c.pos[1];
     const float dz = P[3 * i + 2] - c.pos[2];
+    if (P[3 * i + 1] > clip_y) continue;
     const float z = dx * f[0] + dy * f[1] + dz * f[2];
     if (z < near) continue;
     const float iz = 1.0f / z;
@@ -124,7 +127,9 @@ void Renderer::apply_edl() {
       const size_t nb[4] = {i - 1, i + 1, i - w_, i + w_};
       for (size_t k : nb) {
         const float dn = depth_[k];
-        sum += dn == inf ? 1.0f : std::max(0.0f, ld - dn);
+        // Empty neighbours don't darken: in a gappy cloud nearly every
+        // point borders a hole, and shading those turns surfaces black.
+        if (dn != inf) sum += std::max(0.0f, ld - dn);
       }
       const float shade = std::exp(-kStrength * sum * 0.25f);
       const uint32_t c = color_[i];

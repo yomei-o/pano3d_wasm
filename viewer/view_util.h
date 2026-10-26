@@ -2,6 +2,8 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <vector>
 
 #include "renderer.h"
 
@@ -36,6 +38,25 @@ inline void overview_camera(const Scene& s, Camera& c) {
   c.pos[1] = hi[1] + span * 1.2f;
   c.yaw = 0;
   c.pitch = -1.5607f;  // just shy of straight down keeps the basis stable
+}
+
+// Height for cutting away the ceiling in overview: a quarter of the way from
+// the mean camera height to the 98th-percentile point height.
+inline float ceiling_clip(const Scene& s) {
+  const size_t n = s.size();
+  const int nt = static_cast<int>(s.track.size() / 3);
+  if (n == 0 || nt == 0) return std::numeric_limits<float>::infinity();
+  float cam = 0;
+  for (int i = 0; i < nt; ++i) cam += s.track[3 * i + 1];
+  cam /= nt;
+  // Sample heights; the file is shuffled, so a prefix is representative.
+  std::vector<float> ys;
+  const size_t m = std::min<size_t>(n, 200000);
+  ys.reserve(m);
+  for (size_t i = 0; i < m; ++i) ys.push_back(s.xyz[3 * i + 1]);
+  std::nth_element(ys.begin(), ys.begin() + m * 98 / 100, ys.end());
+  const float top = ys[m * 98 / 100];
+  return top > cam ? cam + 0.25f * (top - cam) : cam;
 }
 
 }  // namespace p3d

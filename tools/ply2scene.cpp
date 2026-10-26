@@ -2,10 +2,12 @@
 // scene file for the viewer (format in viewer/renderer.h).
 //
 //   ply2scene <points.ply> <images.txt> <out.p3d> [--voxel SIZE] [--ref cam0/]
+//             [--min-neighbors N]
 //
 // The cloud is rotated so the mean camera "up" becomes +Y and translated so
 // the camera path is centred on the origin. --voxel 0 keeps every point; the
-// default picks a size from the cloud extent.
+// default picks a size from the cloud extent. --min-neighbors 0 disables the
+// density filter that removes stray MVS points.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -157,11 +159,13 @@ int main(int argc, char** argv) {
     return 1;
   }
   double voxel = -1;
+  int min_neighbors = 30;
   std::string ref = "cam0/";
   for (int a = 4; a < argc; ++a) {
     const std::string s = argv[a];
     if (s == "--voxel" && a + 1 < argc) voxel = std::atof(argv[++a]);
     else if (s == "--ref" && a + 1 < argc) ref = argv[++a];
+    else if (s == "--min-neighbors" && a + 1 < argc) min_neighbors = std::atoi(argv[++a]);
   }
   Cloud cloud;
   if (!read_ply(argv[1], cloud)) {
@@ -195,7 +199,7 @@ int main(int argc, char** argv) {
     out[2] = static_cast<float>(d[0] * ez[0] + d[1] * ez[1] + d[2] * ez[2]);
   };
 
-  const size_t count = cloud.rgb.size() / 3;
+  size_t count = cloud.rgb.size() / 3;
   std::vector<float> pts(count * 3);
   for (size_t i = 0; i < count; ++i) {
     const double p[3] = {cloud.xyz[3 * i], cloud.xyz[3 * i + 1], cloud.xyz[3 * i + 2]};
@@ -212,6 +216,41 @@ int main(int argc, char** argv) {
     extent = std::max(extent, span);
   }
   if (voxel < 0) voxel = extent / 1500;
+
+  // Density filter: MVS noise shows up as thin streaks along viewing rays.
+  // Count points per coarse cell and drop points whose 3x3x3 neighbourhood
+  // holds fewer than `min_neighbors`.
+  if (min_neighbors > 0) {
+    const double cell = extent / 300;
+    auto key_of = [&](const float* p, int dx, int dy, int dz) {
+      const int d[3] = {dx, dy, dz};
+      uint64_t key = 0;
+      for (int k = 0; k < 3; ++k) {
+        const int64_t q = static_cast<int64_t>(std::floor(p[k] / cell)) + d[k];
+        key = key * 2097143u + static_cast<uint64_t>(q + (1 << 20));
+      }
+      return key;
+    };
+    std::unordered_map<uint64_t, uint32_t> cells;
+    cells.reserve(count / 4);
+    for (size_t i = 0; i < count; ++i) ++cells[key_of(&pts[3 * i], 0, 0, 0)];
+    size_t kept = 0;
+    for (size_t i = 0; i < count; ++i) {
+      uint32_t sum = 0;
+      for (int dx = -1; dx <= 1; ++dx)
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dz = -1; dz <= 1; ++dz) {
+            const auto it = cells.find(key_of(&pts[3 * i], dx, dy, dz));
+            if (it != cells.end()) sum += it->second;
+          }
+      if (sum < static_cast<uint32_t>(min_neighbors)) continue;
+      std::memmove(&pts[3 * kept], &pts[3 * i], 12);
+      std::memmove(&cloud.rgb[3 * kept], &cloud.rgb[3 * i], 3);
+      ++kept;
+    }
+    std::printf("density filter: %zu -> %zu points\n", count, kept);
+    count = kept;
+  }
 
   struct Acc { double p[3]; uint32_t c[3]; uint32_t n; };
   std::vector<float> out_xyz;
@@ -235,7 +274,7 @@ int main(int argc, char** argv) {
       out_rgba.push_back(255);
     }
   } else {
-    out_xyz = pts;
+    out_xyz.assign(pts.begin(), pts.begin() + count * 3);
     for (size_t i = 0; i < count; ++i) {
       for (int k = 0; k < 3; ++k) out_rgba.push_back(cloud.rgb[3 * i + k]);
       out_rgba.push_back(255);

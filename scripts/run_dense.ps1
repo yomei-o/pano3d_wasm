@@ -10,6 +10,7 @@ param(
   [int]$Stride = 4,
   [int]$Sources = 8,
   [int]$Iterations = 3,
+  [int]$MinPixels = 2,  # views that must agree per fused point (COLMAP default 5)
   [string]$Colmap = ""
 )
 $ErrorActionPreference = "Stop"
@@ -54,7 +55,8 @@ Step "patch_match_stereo" {
 }
 Step "stereo_fusion" {
   & $Colmap stereo_fusion --workspace_path $dense --workspace_format COLMAP `
-    --input_type geometric --output_path "$dense/fused.ply"
+    --input_type geometric --output_path "$dense/fused.ply" `
+    --StereoFusion.min_num_pixels $MinPixels
 }
 New-Item -ItemType Directory -Force "$Work/sparse_txt" | Out-Null
 Step "model_converter" {

@@ -9,7 +9,7 @@
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
                font: 13px system-ui, sans-serif; overflow: hidden; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%;
-           image-rendering: pixelated; touch-action: none; cursor: grab; }
+           touch-action: none; cursor: grab; }
   canvas:active { cursor: grabbing; }
   #ui { position: fixed; left: 12px; top: 12px; padding: 10px 12px; border-radius: 8px;
         background: var(--panel); max-width: calc(100vw - 48px); }
@@ -25,10 +25,11 @@
 <div id="ui">
   <div id="stats">loading…</div>
   <label>位置 <input id="track" type="range" min="0" max="0" value="0"></label>
-  <label>点サイズ <input id="psize" type="range" min="0.5" max="4" step="0.1" value="1.5"></label>
-  <label>解像度 <input id="res" type="range" min="0.25" max="1" step="0.05" value="0.5"></label>
+  <label>点サイズ <input id="psize" type="range" min="0.5" max="4" step="0.1" value="1"></label>
+  <label>解像度 <input id="res" type="range" min="0.25" max="1" step="0.05" value="0.75"></label>
   <label>操作中の点数 <input id="budget" type="range" min="100000" max="4000000" step="100000" value="600000"></label>
   <label><input id="edl" type="checkbox" checked> EDL 陰影</label>
+  <label><input id="ceil" type="checkbox"> 天井カット</label>
   <button id="overview">俯瞰</button><button id="start">撮影位置へ</button>
   <div class="help">ドラッグ: 視点 / WASD: 移動 / Q E: 上下<br>ホイール: 移動速度 / Shift: 速く</div>
 </div>
@@ -101,13 +102,21 @@ async function start() {
   document.getElementById('res').addEventListener('input', () => { resize(); touch(); });
   document.getElementById('edl').addEventListener('change',
       e => { M._p3d_set_edl(e.target.checked ? 1 : 0); touch(); });
-  document.getElementById('overview').addEventListener('click', () => { M._p3d_overview(); touch(); });
+  const ceil = document.getElementById('ceil');
+  ceil.addEventListener('change', () => { M._p3d_set_ceiling_cut(ceil.checked ? 1 : 0); touch(); });
+  document.getElementById('overview').addEventListener('click', () => {
+    M._p3d_overview();
+    if (!ceil.checked) { ceil.checked = true; M._p3d_set_ceiling_cut(1); }
+    touch();
+  });
   document.getElementById('start').addEventListener('click',
       () => { M._p3d_goto_track(+track.value); touch(); });
 
   // Render on demand: a point budget while the view changes, then one
   // full-quality frame once it has been still for a moment.
   const budget = document.getElementById('budget');
+  // ?full=1 always draws every point (headless screenshots never go idle).
+  const forceFull = params.get('full') === '1';
   let lastChange = performance.now(), fullDone = false;
   function touch() { lastChange = performance.now(); fullDone = false; }
 
@@ -124,12 +133,12 @@ async function start() {
     const still = now - lastChange > 200;
     if (!fullDone) {
       const t0 = performance.now();
-      const px = M._p3d_render(still ? 0 : +budget.value);
+      const px = M._p3d_render(still || forceFull ? 0 : +budget.value);
       // HEAPU8 must be re-read each frame: memory growth replaces the buffer.
       image.data.set(M.HEAPU8.subarray(px, px + w * h * 4));
       ctx.putImageData(image, 0, 0);
       renderMs = performance.now() - t0;
-      mode = still ? '全点' : '間引き';
+      mode = still || forceFull ? '全点' : '間引き';
       fullDone = still;
       stats.textContent = `${npts.toLocaleString()} 点 · ${w}×${h} · ${mode} 描画 ${renderMs.toFixed(1)} ms`;
     }
