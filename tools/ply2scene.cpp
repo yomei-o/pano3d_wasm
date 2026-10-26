@@ -114,7 +114,7 @@ static bool read_ply(const char* path, Cloud& c) {
   return true;
 }
 
-struct Pose { std::string name; double center[3], up[3]; };
+struct Pose { std::string name; double center[3], up[3], R[3][3]; };
 
 // COLMAP images.txt: "ID QW QX QY QZ TX TY TZ CAMERA_ID NAME" then a
 // line of 2D points. Keeps only images whose name contains `ref`.
@@ -139,6 +139,7 @@ static std::vector<Pose> read_images(const char* path, const std::string& ref) {
         {2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)}};
     Pose p;
     p.name = name;
+    std::memcpy(p.R, R, sizeof(R));
     for (int k = 0; k < 3; ++k) {
       // center = -R^T t; world up = -(camera y axis) = -R^T e_y.
       p.center[k] = -(R[0][k] * t[0] + R[1][k] * t[1] + R[2][k] * t[2]);
@@ -300,6 +301,34 @@ int main(int argc, char** argv) {
 
   std::vector<float> track(poses.size() * 3);
   for (size_t i = 0; i < poses.size(); ++i) xform(poses[i].center, &track[3 * i]);
+
+  // Sidecar JSON for the viewer's panorama mode: per capture position, the
+  // frame file name, position, and pano_from_viewer rotation (row-major).
+  // The panorama frame is the rig frame, i.e. cam0's (x right, y down,
+  // z forward), so pano_from_viewer = cam0_from_world * world_from_viewer.
+  {
+    const std::string json_path = std::string(argv[3]) + ".json";
+    FILE* jf = std::fopen(json_path.c_str(), "w");
+    if (!jf) return 1;
+    std::fprintf(jf, "{\"poses\": [\n");
+    for (size_t i = 0; i < poses.size(); ++i) {
+      const auto& p = poses[i];
+      const std::string file = p.name.substr(p.name.find_last_of('/') + 1);
+      double Rv[3][3];
+      for (int r = 0; r < 3; ++r) {
+        const double* m[3] = {ex, up, ez};  // viewer axes in world coords
+        for (int c = 0; c < 3; ++c)
+          Rv[r][c] = p.R[r][0] * m[c][0] + p.R[r][1] * m[c][1] + p.R[r][2] * m[c][2];
+      }
+      std::fprintf(jf, "  {\"frame\": \"%s\", \"p\": [%.5f, %.5f, %.5f], \"R\": [",
+                   file.c_str(), track[3 * i], track[3 * i + 1], track[3 * i + 2]);
+      for (int k = 0; k < 9; ++k)
+        std::fprintf(jf, "%.6f%s", Rv[k / 3][k % 3], k < 8 ? ", " : "");
+      std::fprintf(jf, "]}%s\n", i + 1 < poses.size() ? "," : "");
+    }
+    std::fprintf(jf, "]}\n");
+    std::fclose(jf);
+  }
 
   FILE* fp = std::fopen(argv[3], "wb");
   if (!fp) return 1;

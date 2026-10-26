@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 
 #include "renderer.h"
@@ -14,6 +15,7 @@ namespace {
 p3d::Scene g_scene;
 p3d::Camera g_cam;
 p3d::Renderer g_renderer;
+p3d::Pano g_pano;
 }  // namespace
 
 extern "C" {
@@ -68,6 +70,29 @@ EMSCRIPTEN_KEEPALIVE void p3d_set_edl(int on) { g_renderer.edl = on != 0; }
 EMSCRIPTEN_KEEPALIVE void p3d_set_ceiling_cut(int on) {
   g_renderer.clip_y = on ? p3d::ceiling_clip(g_scene)
                          : std::numeric_limits<float>::infinity();
+}
+
+// Installs a decoded panorama (RGBA, from p3d_alloc) with its 3x3
+// pano_from_viewer rotation, and moves the camera to (x, y, z).
+EMSCRIPTEN_KEEPALIVE void p3d_set_pano(const uint8_t* rgba, int w, int h, const float* R,
+                                       float x, float y, float z) {
+  g_pano.width = w;
+  g_pano.height = h;
+  g_pano.rgba.resize(size_t(w) * h);
+  std::memcpy(g_pano.rgba.data(), rgba, size_t(w) * h * 4);
+  std::memcpy(g_pano.R, R, sizeof(g_pano.R));
+  g_cam.pos[0] = x;
+  g_cam.pos[1] = y;
+  g_cam.pos[2] = z;
+}
+
+EMSCRIPTEN_KEEPALIVE float p3d_get_yaw() { return g_cam.yaw; }
+
+EMSCRIPTEN_KEEPALIVE const float* p3d_get_pos() { return g_cam.pos; }
+
+EMSCRIPTEN_KEEPALIVE const uint32_t* p3d_render_pano() {
+  g_renderer.render_pano(g_pano, g_cam);
+  return g_renderer.pixels();
 }
 
 // Renders the first `limit` points (0 = all) and returns the RGBA

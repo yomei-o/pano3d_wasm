@@ -32,12 +32,23 @@ struct Camera {
   void move(float forward, float strafe, float rise);
 };
 
+// One equirect capture frame with its orientation: pano_from_viewer maps a
+// viewer-world direction into the panorama's frame (x right, y down,
+// z forward; longitude 0 at +z).
+struct Pano {
+  std::vector<uint32_t> rgba;
+  int width = 0, height = 0;
+  float R[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+};
+
 class Renderer {
  public:
   void resize(int w, int h);
   // Draws the first `limit` points (all when 0). Scene files are shuffled,
   // so a prefix is a uniform subsample; splats grow to keep coverage.
   void render(const Scene& s, const Camera& c, size_t limit = 0);
+  // Resamples the panorama for the camera's orientation (position ignored).
+  void render_pano(const Pano& p, const Camera& c);
   const uint32_t* pixels() const { return color_.data(); }
   int width() const { return w_; }
   int height() const { return h_; }
@@ -51,6 +62,7 @@ class Renderer {
   std::vector<uint32_t> color_;
   std::vector<float> depth_;
   std::vector<uint32_t> shade_;
+  std::vector<float> grid_;  // render_pano: panorama coords on a coarse grid
 };
 
 }  // namespace p3d

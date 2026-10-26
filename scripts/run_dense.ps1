@@ -63,5 +63,5 @@ Step "model_converter" {
   & $Colmap model_converter --input_path $sparse --output_path "$Work/sparse_txt" --output_type TXT
 }
 Step "ply2scene" {
-  & "$tools/ply2scene.exe" "$dense/fused.ply" "$Work/sparse_txt/images.txt" "$Work/scene.p3d"
+  & "$tools/ply2scene.exe" "$dense/fused.ply" "$Work/sparse_txt/images.txt" "$Work/scene.p3d"  # also writes scene.p3d.json
 }

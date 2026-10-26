@@ -5,40 +5,55 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pano3d viewer</title>
 <style>
-  :root { --bg: #1a1c20; --fg: #e6e6e6; --muted: #9aa0a6; --panel: rgba(20,22,26,.82); }
+  :root { --bg: #1a1c20; --fg: #e6e6e6; --muted: #9aa0a6; --panel: rgba(20,22,26,.82);
+          --accent: #4aa3ff; --dot: #c9ced6; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
                font: 13px system-ui, sans-serif; overflow: hidden; }
-  canvas { position: fixed; inset: 0; width: 100%; height: 100%;
-           touch-action: none; cursor: grab; }
-  canvas:active { cursor: grabbing; }
-  #ui { position: fixed; left: 12px; top: 12px; padding: 10px 12px; border-radius: 8px;
-        background: var(--panel); max-width: calc(100vw - 48px); }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%;
+       touch-action: none; cursor: grab; }
+  #c:active { cursor: grabbing; }
+  .panel { position: fixed; padding: 10px 12px; border-radius: 8px; background: var(--panel); }
+  #ui { left: 12px; top: 12px; max-width: calc(100vw - 48px); }
   #ui label { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
   #ui input[type=range] { flex: 1; min-width: 120px; }
   #ui button { margin: 2px 4px 2px 0; }
   #stats, .help { color: var(--muted); }
   .help { margin-top: 6px; line-height: 1.5; }
+  .only3d[hidden] { display: none; }
+  #mapbox { right: 12px; bottom: 12px; padding: 6px; }
+  #map { display: block; width: 220px; height: 220px; cursor: pointer; }
+  @media (max-width: 600px) { #map { width: 140px; height: 140px; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="ui">
+<div id="ui" class="panel">
   <div id="stats">loading…</div>
+  <div><button id="mode">3D 点群にする</button></div>
   <label>位置 <input id="track" type="range" min="0" max="0" value="0"></label>
-  <label>点サイズ <input id="psize" type="range" min="0.5" max="4" step="0.1" value="1"></label>
   <label>解像度 <input id="res" type="range" min="0.25" max="1" step="0.05" value="0.75"></label>
-  <label>操作中の点数 <input id="budget" type="range" min="100000" max="4000000" step="100000" value="600000"></label>
-  <label><input id="edl" type="checkbox" checked> EDL 陰影</label>
-  <label><input id="ceil" type="checkbox"> 天井カット</label>
-  <button id="overview">俯瞰</button><button id="side">側面</button><button id="start">撮影位置へ</button>
-  <div class="help">ドラッグ: 視点 / WASD: 移動 / Q E: 上下<br>ホイール: 移動速度 / Shift: 速く</div>
+  <div class="only3d">
+    <label>点サイズ <input id="psize" type="range" min="0.5" max="4" step="0.1" value="1"></label>
+    <label>操作中の点数 <input id="budget" type="range" min="100000" max="4000000" step="100000" value="600000"></label>
+    <label><input id="edl" type="checkbox" checked> EDL 陰影</label>
+    <label><input id="ceil" type="checkbox"> 天井カット</label>
+    <button id="overview">俯瞰</button><button id="side">側面</button>
+  </div>
+  <div class="help" id="help"></div>
 </div>
+<div id="mapbox" class="panel"><canvas id="map" width="440" height="440"></canvas></div>
 <script>
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const stats = document.getElementById('stats');
 const params = new URLSearchParams(location.search);
-const sceneUrl = params.get('scene') || 'scene.p3d';
+// ?scene=NAME loads NAME/scene.p3d, NAME/scene.p3d.json and NAME/pano/*.jpg.
+const sceneDir = params.get('scene') || 'scene';
+
+const HELP = {
+  pano: 'ドラッグ: 見回す / ホイール: ズーム<br>W S A D・クリック: その方向の撮影位置へ移動<br>右下の地図クリック: その場所へ',
+  '3d': 'ドラッグ: 視点 / WASD: 移動 / Q E: 上下<br>ホイール: 移動速度 / Shift: 速く',
+};
 
 var Module = {
   onRuntimeInitialized: start,
@@ -47,20 +62,34 @@ var Module = {
 
 async function start() {
   const M = Module;
-  const res = await fetch(sceneUrl);
-  if (!res.ok) { stats.textContent = `failed to load ${sceneUrl}: ${res.status}`; return; }
+  const res = await fetch(`${sceneDir}/scene.p3d`);
+  if (!res.ok) { stats.textContent = `failed to load ${sceneDir}: ${res.status}`; return; }
   const bytes = new Uint8Array(await res.arrayBuffer());
-  const ptr = M._p3d_alloc(bytes.length);
+  let ptr = M._p3d_alloc(bytes.length);
   M.HEAPU8.set(bytes, ptr);
   const npts = M._p3d_load(ptr, bytes.length);
   M._p3d_free(ptr);
   if (npts < 0) { stats.textContent = 'invalid scene file'; return; }
 
-  const ntrack = M._p3d_track_count();
+  // Capture positions with orientations; without them only 3D mode works.
+  let poses = [];
+  try {
+    const j = await fetch(`${sceneDir}/scene.p3d.json`);
+    if (j.ok) poses = (await j.json()).poses;
+  } catch (e) { console.warn('no poses', e); }
+  const hasPano = poses.length > 0;
+
   const track = document.getElementById('track');
-  track.max = Math.max(0, ntrack - 1);
+  track.max = Math.max(0, M._p3d_track_count() - 1);
   // Scene units are arbitrary (SfM has no scale); derive speed from point spacing.
   let speed = M._p3d_scene_scale() * 40;
+  let mode = hasPano ? 'pano' : '3d';
+  let hfov = 1.5;
+
+  // Typical spacing between consecutive captures, for choosing step targets.
+  const gaps = poses.slice(1).map((p, i) => Math.hypot(p.p[0] - poses[i].p[0], p.p[2] - poses[i].p[2]))
+                    .sort((a, b) => a - b);
+  const spacing = gaps.length ? Math.max(gaps[gaps.length >> 1], 1e-4) : 1;
 
   let w = 0, h = 0, image = null;
   function resize() {
@@ -72,31 +101,149 @@ async function start() {
     canvas.width = w; canvas.height = h;
     M._p3d_resize(w, h);
     image = ctx.createImageData(w, h);
+    fade = null;
   }
 
+  // ---- panorama loading (browser decodes the JPEG; wasm only resamples) ----
+  const cache = new Map();  // pose index -> Promise<ImageData>
+  const scratch = document.createElement('canvas');
+  const sctx = scratch.getContext('2d', { willReadFrequently: true });
+  function loadPano(k) {
+    if (cache.has(k)) return cache.get(k);
+    const pr = fetch(`${sceneDir}/pano/${poses[k].frame}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+      .then(b => createImageBitmap(b))
+      .then(bmp => {
+        scratch.width = bmp.width; scratch.height = bmp.height;
+        sctx.drawImage(bmp, 0, 0);
+        return sctx.getImageData(0, 0, bmp.width, bmp.height);
+      });
+    cache.set(k, pr);
+    if (cache.size > 24) cache.delete(cache.keys().next().value);
+    pr.catch(() => cache.delete(k));
+    return pr;
+  }
+
+  let cur = -1, fade = null, loading = false;
+  async function gotoPose(k, animate = true) {
+    if (!hasPano || k < 0 || k >= poses.length) return;
+    loading = true;
+    let img;
+    try { img = await loadPano(k); } catch (e) { stats.textContent = `写真の読み込み失敗: ${poses[k].frame}`; loading = false; return; }
+    if (animate && cur >= 0 && image) fade = { from: new Uint8ClampedArray(image.data), t0: performance.now() };
+    const p = poses[k];
+    ptr = M._p3d_alloc(img.data.length + 36);
+    M.HEAPU8.set(img.data, ptr);
+    const rptr = ptr + img.data.length;
+    new Float32Array(M.HEAPU8.buffer, rptr, 9).set(p.R);
+    M._p3d_set_pano(ptr, img.width, img.height, rptr, p.p[0], p.p[1], p.p[2]);
+    M._p3d_free(ptr);
+    cur = k;
+    track.value = k;
+    loading = false;
+    touch();
+    // Warm up the neighbours and the likely next steps.
+    for (const d of [1, -1, 2, -2, 4, -4]) if (poses[k + d]) loadPano(k + d);
+    for (const dir of [0, Math.PI]) { const n = stepTarget(dir); if (n >= 0) loadPano(n); }
+  }
+
+  // Capture position in direction `rel` (radians, relative to the view yaw):
+  // the nearest one at least a couple of captures away inside a 45° cone.
+  function stepTarget(rel) {
+    if (cur < 0) return -1;
+    const yaw = M._p3d_get_yaw() + rel;
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const c = poses[cur].p;
+    let best = -1, bestD = Infinity, near = -1, nearD = Infinity;
+    poses.forEach((p, j) => {
+      if (j === cur) return;
+      // Direction from the horizontal offset, distance in 3D: on stairs the
+      // capture directly above/below on another floor stays far away.
+      const dx = p.p[0] - c[0], dz = p.p[2] - c[2], hd = Math.hypot(dx, dz);
+      const d = Math.hypot(dx, p.p[1] - c[1], dz);
+      if (hd < 1e-6 || (dx * fx + dz * fz) / hd < 0.7) return;
+      if (d >= 2 * spacing && d < bestD) { best = j; bestD = d; }
+      if (d < nearD) { near = j; nearD = d; }
+    });
+    return best >= 0 ? best : near;
+  }
+  function step(rel) { const n = stepTarget(rel); if (n >= 0) gotoPose(n); }
+
+  function nearestPose() {
+    const pp = M._p3d_get_pos();
+    const q = new Float32Array(M.HEAPU8.buffer, pp, 3);
+    let best = 0, bd = Infinity;
+    poses.forEach((p, j) => {
+      const d = Math.hypot(p.p[0] - q[0], p.p[1] - q[1], p.p[2] - q[2]);
+      if (d < bd) { bd = d; best = j; }
+    });
+    return best;
+  }
+
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll('.only3d').forEach(e => e.hidden = mode !== '3d');
+    document.getElementById('mode').textContent = mode === 'pano' ? '3D 点群にする' : '写真にする';
+    document.getElementById('mode').hidden = !hasPano;
+    document.getElementById('help').innerHTML = HELP[mode];
+    M._p3d_set_fov(mode === 'pano' ? hfov : 1.5);
+    fade = null;
+    // Points and photo share the camera, so switching keeps the viewpoint.
+    if (mode === 'pano') gotoPose(nearestPose(), false);
+    touch();
+  }
+
+  // ---- input ----
   const keys = new Set();
-  addEventListener('keydown', e => keys.add(e.code));
+  addEventListener('keydown', e => {
+    keys.add(e.code);
+    if (mode !== 'pano' || e.repeat) return;
+    const rel = { KeyW: 0, ArrowUp: 0, KeyS: Math.PI, ArrowDown: Math.PI,
+                  KeyA: -Math.PI / 2, KeyD: Math.PI / 2 }[e.code];
+    if (rel !== undefined) step(rel);
+  });
   addEventListener('keyup', e => keys.delete(e.code));
   addEventListener('blur', () => keys.clear());
   addEventListener('resize', () => { resize(); touch(); });
-  addEventListener('wheel', e => { speed *= e.deltaY < 0 ? 1.2 : 1 / 1.2; e.preventDefault(); },
-                   { passive: false });
+  addEventListener('wheel', e => {
+    if (mode === 'pano') {
+      hfov = Math.min(2.2, Math.max(0.4, hfov * (e.deltaY < 0 ? 1 / 1.1 : 1.1)));
+      M._p3d_set_fov(hfov);
+      touch();
+    } else {
+      speed *= e.deltaY < 0 ? 1.2 : 1 / 1.2;
+    }
+    e.preventDefault();
+  }, { passive: false });
 
   let drag = null;
   canvas.addEventListener('pointerdown', e => {
-    drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, moved: 0 }; canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', e => {
     if (!drag) return;
-    const k = 0.004;
+    const k = 0.004 * (mode === 'pano' ? hfov / 1.5 : 1);
     M._p3d_look(-(e.clientX - drag.x) * k, -(e.clientY - drag.y) * k);
+    drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
+    drag.x = e.clientX; drag.y = e.clientY;
     touch();
-    drag = { x: e.clientX, y: e.clientY };
   });
-  canvas.addEventListener('pointerup', () => { drag = null; });
+  canvas.addEventListener('pointerup', e => {
+    // A click (not a drag) in photo mode steps toward the clicked side.
+    if (drag && drag.moved < 4 && mode === 'pano') {
+      const r = canvas.getBoundingClientRect();
+      const nx = (e.clientX - r.left) / r.width - 0.5;
+      step(Math.atan(2 * nx * Math.tan(hfov / 2)));
+    }
+    drag = null;
+  });
   canvas.addEventListener('pointercancel', () => { drag = null; });
 
-  track.addEventListener('input', () => { M._p3d_goto_track(+track.value); touch(); });
+  track.addEventListener('input', () => {
+    if (mode === 'pano') gotoPose(+track.value, false);
+    else { M._p3d_goto_track(+track.value); touch(); }
+  });
+  document.getElementById('mode').addEventListener('click', () => setMode(mode === 'pano' ? '3d' : 'pano'));
   document.getElementById('psize').addEventListener('input',
       e => { M._p3d_set_point_scale(+e.target.value); touch(); });
   document.getElementById('res').addEventListener('input', () => { resize(); touch(); });
@@ -110,11 +257,55 @@ async function start() {
     if (!ceil.checked) { ceil.checked = true; M._p3d_set_ceiling_cut(1); }
     touch();
   });
-  document.getElementById('start').addEventListener('click',
-      () => { M._p3d_goto_track(+track.value); touch(); });
 
-  // Render on demand: a point budget while the view changes, then one
-  // full-quality frame once it has been still for a moment.
+  // ---- minimap: capture path from above, click to jump ----
+  const map = document.getElementById('map'), mctx = map.getContext('2d');
+  let mapXf = null;
+  if (poses.length) {
+    const xs = poses.map(p => p.p[0]), zs = poses.map(p => p.p[2]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+    const s = (map.width - 40) / Math.max(x1 - x0, z1 - z0, 1e-6);
+    const ox = (map.width - (x1 - x0) * s) / 2, oz = (map.height - (z1 - z0) * s) / 2;
+    // Screen up = +z (initial view direction is along +z), screen right = +x.
+    mapXf = { to: (x, z) => [ox + (x - x0) * s, map.height - (oz + (z - z0) * s)] };
+  } else {
+    document.getElementById('mapbox').hidden = true;
+  }
+  function drawMap() {
+    if (!mapXf) return;
+    const css = getComputedStyle(document.documentElement);
+    mctx.clearRect(0, 0, map.width, map.height);
+    mctx.fillStyle = css.getPropertyValue('--dot');
+    for (const p of poses) {
+      const [x, y] = mapXf.to(p.p[0], p.p[2]);
+      mctx.fillRect(x - 2, y - 2, 4, 4);
+    }
+    const pp = new Float32Array(M.HEAPU8.buffer, M._p3d_get_pos(), 3);
+    const [x, y] = mapXf.to(pp[0], pp[2]);
+    const yaw = M._p3d_get_yaw();
+    mctx.fillStyle = css.getPropertyValue('--accent');
+    mctx.beginPath();
+    mctx.moveTo(x + 18 * Math.sin(yaw), y - 18 * Math.cos(yaw));
+    mctx.lineTo(x + 7 * Math.sin(yaw + 2.4), y - 7 * Math.cos(yaw + 2.4));
+    mctx.lineTo(x + 7 * Math.sin(yaw - 2.4), y - 7 * Math.cos(yaw - 2.4));
+    mctx.closePath();
+    mctx.fill();
+  }
+  map.addEventListener('click', e => {
+    const r = map.getBoundingClientRect();
+    const mx = (e.clientX - r.left) * map.width / r.width, my = (e.clientY - r.top) * map.height / r.height;
+    let best = -1, bd = Infinity;
+    poses.forEach((p, j) => {
+      const [x, y] = mapXf.to(p.p[0], p.p[2]);
+      const d = Math.hypot(x - mx, y - my);
+      if (d < bd) { bd = d; best = j; }
+    });
+    if (best < 0) return;
+    if (mode === 'pano') gotoPose(best);
+    else { M._p3d_goto_track(best); touch(); }
+  });
+
+  // ---- render loop: on demand ----
   const budget = document.getElementById('budget');
   // ?full=1 always draws every point (headless screenshots never go idle).
   const forceFull = params.get('full') === '1';
@@ -122,26 +313,44 @@ async function start() {
   function touch() { lastChange = performance.now(); fullDone = false; }
 
   resize();
-  let last = performance.now(), renderMs = 0, mode = '';
+  setMode(params.get('mode') === '3d' || !hasPano ? '3d' : 'pano');
+  if (hasPano && params.has('pos')) gotoPose(+params.get('pos'), false);
+
+  let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
-    const v = speed * dt * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4 : 1);
-    const f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-    const s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-    const u = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);
-    if (f || s || u) { M._p3d_move(f * v, s * v, u * v); touch(); }
-
+    if (mode === '3d') {
+      const v = speed * dt * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4 : 1);
+      const f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+      const s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+      const u = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);
+      if (f || s || u) { M._p3d_move(f * v, s * v, u * v); touch(); }
+    }
     const still = now - lastChange > 200;
-    if (!fullDone) {
+    if (!fullDone || fade) {
       const t0 = performance.now();
-      const px = M._p3d_render(still || forceFull ? 0 : +budget.value);
+      let px, label;
+      if (mode === 'pano') {
+        if (cur < 0) { requestAnimationFrame(frame); return; }
+        px = M._p3d_render_pano();
+        label = `写真 ${cur + 1}/${poses.length} (${poses[cur].frame})`;
+      } else {
+        px = M._p3d_render(still || forceFull ? 0 : +budget.value);
+        label = `${npts.toLocaleString()} 点 · ${still || forceFull ? '全点' : '間引き'}`;
+      }
       // HEAPU8 must be re-read each frame: memory growth replaces the buffer.
       image.data.set(M.HEAPU8.subarray(px, px + w * h * 4));
+      if (fade) {
+        // Cross-fade from the previous photo while moving between positions.
+        const a = Math.min(1, (now - fade.t0) / 300);
+        const d = image.data, f = fade.from;
+        for (let i = 0; i < d.length; i++) d[i] = f[i] + (d[i] - f[i]) * a;
+        if (a >= 1) fade = null;
+      }
       ctx.putImageData(image, 0, 0);
-      renderMs = performance.now() - t0;
-      mode = still || forceFull ? '全点' : '間引き';
-      fullDone = still;
-      stats.textContent = `${npts.toLocaleString()} 点 · ${w}×${h} · ${mode} 描画 ${renderMs.toFixed(1)} ms`;
+      stats.textContent = `${label} · ${w}×${h} · ${(performance.now() - t0).toFixed(1)} ms${loading ? ' · 読み込み中' : ''}`;
+      fullDone = mode === 'pano' || still;
+      drawMap();
     }
     requestAnimationFrame(frame);
   }

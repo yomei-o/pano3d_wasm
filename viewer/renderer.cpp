@@ -109,6 +109,118 @@ void Renderer::render(const Scene& s, const Camera& c, size_t limit) {
   if (edl) apply_edl();
 }
 
+namespace {
+// atan2 via a degree-11 minimax polynomial on [0, 1]; |error| < 1e-5 rad,
+// far below a panorama pixel (1920 px wide = 3.3e-3 rad), and several times
+// faster than std::atan2 in wasm.
+inline float fast_atan2(float y, float x) {
+  const float ax = std::fabs(x), ay = std::fabs(y);
+  const float mx = std::max(ax, ay), mn = std::min(ax, ay);
+  const float a = mx > 0 ? mn / mx : 0.0f;
+  const float s = a * a;
+  float r = ((((-0.01172120f * s + 0.05265332f) * s - 0.11643287f) * s + 0.19354346f) * s -
+             0.33262347f) * s + 0.99997726f;
+  r *= a;
+  if (ay > ax) r = 1.57079637f - r;
+  if (x < 0) r = 3.14159274f - r;
+  return y < 0 ? -r : r;
+}
+}  // namespace
+
+void Renderer::render_pano(const Pano& p, const Camera& c) {
+  constexpr float kInvTwoPi = 0.15915494f, kInvPi = 0.31830989f;
+  if (p.width == 0) return;
+  float r[3], u[3], f[3];
+  c.basis(r, u, f);
+  const float F = 0.5f * w_ / std::tan(0.5f * c.hfov);
+  const float cx = 0.5f * w_, cy = 0.5f * h_;
+  // Fold camera basis and pano rotation into one matrix: pixel (x, y, 1)
+  // -> panorama direction.
+  float A[3][3];
+  for (int i = 0; i < 3; ++i) {
+    const float* Ri = &p.R[3 * i];
+    const float rr = Ri[0] * r[0] + Ri[1] * r[1] + Ri[2] * r[2];
+    const float uu = Ri[0] * u[0] + Ri[1] * u[1] + Ri[2] * u[2];
+    const float ff = Ri[0] * f[0] + Ri[1] * f[1] + Ri[2] * f[2];
+    A[i][0] = rr / F;
+    A[i][1] = -uu / F;
+    A[i][2] = ff - (rr * cx - uu * cy) / F;
+  }
+  const int W = p.width, H = p.height;
+  const uint32_t* src = p.rgba.data();
+  // Panorama pixel coordinates for a screen point.
+  auto project = [&](float xc, float yc, float& px, float& py) {
+    const float dx = A[0][0] * xc + A[0][1] * yc + A[0][2];
+    const float dy = A[1][0] * xc + A[1][1] * yc + A[1][2];
+    const float dz = A[2][0] * xc + A[2][1] * yc + A[2][2];
+    const float lon = fast_atan2(dx, dz);
+    const float lat = -fast_atan2(dy, std::sqrt(dx * dx + dz * dz));
+    px = (lon * kInvTwoPi + 0.5f) * W - 0.5f;
+    py = (0.5f - lat * kInvPi) * H - 0.5f;
+  };
+  auto sample = [&](float px, float py) -> uint32_t {
+    py = std::clamp(py, 0.0f, H - 1.001f);
+    const int x0 = static_cast<int>(std::floor(px)), y0 = static_cast<int>(py);
+    const float fx = px - x0, fy = py - y0;
+    int xa = x0;
+    if (xa < 0) xa += W; else if (xa >= W) xa -= W;
+    const int xb = xa + 1 == W ? 0 : xa + 1;
+    const uint32_t* r0 = src + size_t(y0) * W;
+    const uint32_t* r1 = r0 + W;
+    const uint32_t c00 = r0[xa], c01 = r0[xb], c10 = r1[xa], c11 = r1[xb];
+    // 8-bit fixed-point weights; R and B (and G alone) share one multiply
+    // each through the 0x00ff00ff lane trick.
+    const uint32_t wx = static_cast<uint32_t>(fx * 256), wy = static_cast<uint32_t>(fy * 256);
+    auto lerp = [](uint32_t a, uint32_t b, uint32_t t) {
+      const uint32_t rb = (((a & 0xff00ffu) * (256 - t) + (b & 0xff00ffu) * t) >> 8) & 0xff00ffu;
+      const uint32_t g = (((a & 0x00ff00u) * (256 - t) + (b & 0x00ff00u) * t) >> 8) & 0x00ff00u;
+      return rb | g;
+    };
+    const uint32_t out = lerp(lerp(c00, c01, wx), lerp(c10, c11, wx), wy) | 0xff000000u;
+    return out;
+  };
+
+  // Trig only on a coarse grid; pixels in between interpolate the panorama
+  // coordinates. The mapping is smooth except across the longitude seam,
+  // where a block falls back to per-pixel projection.
+  constexpr int kStep = 8;
+  const int gw = w_ / kStep + 2, gh = h_ / kStep + 2;
+  grid_.resize(size_t(gw) * gh * 2);
+  for (int gy = 0; gy < gh; ++gy)
+    for (int gx = 0; gx < gw; ++gx) {
+      float* g = &grid_[(size_t(gy) * gw + gx) * 2];
+      project(float(gx * kStep), float(gy * kStep), g[0], g[1]);
+    }
+  for (int by = 0; by < h_; by += kStep) {
+    for (int bx = 0; bx < w_; bx += kStep) {
+      const int gx = bx / kStep, gy = by / kStep;
+      const float* g00 = &grid_[(size_t(gy) * gw + gx) * 2];
+      const float* g01 = g00 + 2;
+      const float* g10 = g00 + size_t(gw) * 2;
+      const float* g11 = g10 + 2;
+      const float lo = std::min({g00[0], g01[0], g10[0], g11[0]});
+      const float hi = std::max({g00[0], g01[0], g10[0], g11[0]});
+      const bool seam = hi - lo > 0.5f * W;
+      const int ye = std::min(by + kStep, h_), xe = std::min(bx + kStep, w_);
+      for (int y = by; y < ye; ++y) {
+        uint32_t* row = &color_[size_t(y) * w_];
+        const float ty = (y + 0.5f - by) / kStep;
+        for (int x = bx; x < xe; ++x) {
+          float px, py;
+          if (seam) {
+            project(x + 0.5f, y + 0.5f, px, py);
+          } else {
+            const float tx = (x + 0.5f - bx) / kStep;
+            px = (g00[0] * (1 - tx) + g01[0] * tx) * (1 - ty) + (g10[0] * (1 - tx) + g11[0] * tx) * ty;
+            py = (g00[1] * (1 - tx) + g01[1] * tx) * (1 - ty) + (g10[1] * (1 - tx) + g11[1] * tx) * ty;
+          }
+          row[x] = sample(px, py);
+        }
+      }
+    }
+  }
+}
+
 // Eye-dome lighting: darken pixels that sit behind their neighbours in
 // log-depth. Gives point clouds readable silhouettes without normals.
 void Renderer::apply_edl() {
