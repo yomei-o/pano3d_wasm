@@ -70,7 +70,7 @@ In both modes the "位置" (position) slider jumps to a capture position, and sw
 
 ## Sample data
 
-AIST 360° sequences published with the stella_vslam tutorial (RICOH THETA S, 1920×960 equirect). Fetch them with `scriptsetch_aist.ps1 <name> ...`. Results on the build machine (RTX 3090):
+AIST 360° sequences published with the stella_vslam tutorial (RICOH THETA S, 1920×960 equirect). Fetch them with `scripts\fetch_aist.ps1 <name> ...`. Results on the build machine (RTX 3090):
 
 | Sequence | Frames (3 fps) | Registered | Dense stride | PatchMatch | Fused → filtered + voxelised |
 |---|---|---|---|---|---|
