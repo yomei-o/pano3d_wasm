@@ -39,6 +39,8 @@ EMSCRIPTEN_KEEPALIVE void p3d_goto_track(int k) { p3d::track_camera(g_scene, k, 
 
 EMSCRIPTEN_KEEPALIVE void p3d_overview() { p3d::overview_camera(g_scene, g_cam); }
 
+EMSCRIPTEN_KEEPALIVE void p3d_side() { p3d::side_camera(g_scene, g_cam); }
+
 EMSCRIPTEN_KEEPALIVE float p3d_scene_scale() {
   return g_scene.splat > 0 ? g_scene.splat : 0.01f;
 }

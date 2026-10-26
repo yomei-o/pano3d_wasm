@@ -53,7 +53,7 @@ To view it, copy `dist/` and `scene.p3d` to any static file server. A different 
 
 ## Viewer controls
 
-Drag to look around, WASD to move, Q/E to go down/up, mouse wheel to change speed, Shift to move faster. The "位置" (position) slider jumps to a capture position. While the camera moves, only the number of points set by "操作中の点数" (points while moving) is drawn. Once the camera stops, the full cloud is drawn once (on-demand rendering).
+Drag to look around, WASD to move, Q/E to go down/up, mouse wheel to change speed, Shift to move faster. The "位置" (position) slider jumps to a capture position; "俯瞰" (overview) looks down with the ceiling cut away, and "側面" (side) looks at the whole scene from the side (useful for multi-floor scenes). While the camera moves, only the number of points set by "操作中の点数" (points while moving) is drawn. Once the camera stops, the full cloud is drawn once (on-demand rendering).
 
 ## Sample data
 

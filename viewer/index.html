@@ -30,7 +30,7 @@
   <label>操作中の点数 <input id="budget" type="range" min="100000" max="4000000" step="100000" value="600000"></label>
   <label><input id="edl" type="checkbox" checked> EDL 陰影</label>
   <label><input id="ceil" type="checkbox"> 天井カット</label>
-  <button id="overview">俯瞰</button><button id="start">撮影位置へ</button>
+  <button id="overview">俯瞰</button><button id="side">側面</button><button id="start">撮影位置へ</button>
   <div class="help">ドラッグ: 視点 / WASD: 移動 / Q E: 上下<br>ホイール: 移動速度 / Shift: 速く</div>
 </div>
 <script>
@@ -104,6 +104,7 @@ async function start() {
       e => { M._p3d_set_edl(e.target.checked ? 1 : 0); touch(); });
   const ceil = document.getElementById('ceil');
   ceil.addEventListener('change', () => { M._p3d_set_ceiling_cut(ceil.checked ? 1 : 0); touch(); });
+  document.getElementById('side').addEventListener('click', () => { M._p3d_side(); touch(); });
   document.getElementById('overview').addEventListener('click', () => {
     M._p3d_overview();
     if (!ceil.checked) { ceil.checked = true; M._p3d_set_ceiling_cut(1); }

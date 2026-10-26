@@ -1,7 +1,7 @@
 // Native harness for the viewer's renderer: renders a scene to PNG so the
 // wasm build's output can be checked without a browser.
 //
-//   render_png <scene.p3d> <out.png> [--track K | --top] [--size WxH]
+//   render_png <scene.p3d> <out.png> [--track K | --top | --side] [--size WxH]
 //              [--bench N]
 #include <algorithm>
 #include <chrono>
@@ -22,16 +22,17 @@
 int main(int argc, char** argv) {
   if (argc < 3) {
     std::fprintf(stderr,
-                 "usage: render_png <scene.p3d> <out.png> [--track K | --top] [--size WxH]"
+                 "usage: render_png <scene.p3d> <out.png> [--track K | --top | --side] [--size WxH]"
                  " [--bench N]\n");
     return 1;
   }
   int w = 960, h = 540, track = 0, bench = 0;
-  bool top = false;
+  bool top = false, side = false;
   for (int a = 3; a < argc; ++a) {
     const std::string s = argv[a];
     if (s == "--track" && a + 1 < argc) track = std::atoi(argv[++a]);
     else if (s == "--top") top = true;
+    else if (s == "--side") side = true;
     else if (s == "--size" && a + 1 < argc) std::sscanf(argv[++a], "%dx%d", &w, &h);
     else if (s == "--bench" && a + 1 < argc) bench = std::atoi(argv[++a]);
   }
@@ -44,6 +45,7 @@ int main(int argc, char** argv) {
   }
   p3d::Camera cam;
   if (top) p3d::overview_camera(scene, cam);
+  else if (side) p3d::side_camera(scene, cam);
   else p3d::track_camera(scene, track, cam);
   p3d::Renderer r;
   r.resize(w, h);

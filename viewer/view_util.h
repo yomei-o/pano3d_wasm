@@ -40,6 +40,25 @@ inline void overview_camera(const Scene& s, Camera& c) {
   c.pitch = -1.5607f;  // just shy of straight down keeps the basis stable
 }
 
+// Look horizontally at the capture path from outside it (along +Z), far
+// enough back to see its whole height: shows floors stacked by stairs.
+inline void side_camera(const Scene& s, Camera& c) {
+  const int n = static_cast<int>(s.track.size() / 3);
+  float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+  for (int i = 0; i < n; ++i)
+    for (int a = 0; a < 3; ++a) {
+      lo[a] = std::min(lo[a], s.track[3 * i + a]);
+      hi[a] = std::max(hi[a], s.track[3 * i + a]);
+    }
+  if (n == 0) for (int a = 0; a < 3; ++a) lo[a] = hi[a] = 0;
+  const float span = std::max({hi[0] - lo[0], hi[1] - lo[1], 1e-3f});
+  c.pos[0] = 0.5f * (lo[0] + hi[0]);
+  c.pos[1] = 0.5f * (lo[1] + hi[1]);
+  c.pos[2] = lo[2] - span * 1.3f;
+  c.yaw = 0;
+  c.pitch = 0;
+}
+
 // Height for cutting away the ceiling in overview: a quarter of the way from
 // the mean camera height to the 98th-percentile point height.
 inline float ceiling_clip(const Scene& s) {
