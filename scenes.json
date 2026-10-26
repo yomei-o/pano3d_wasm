@@ -1,0 +1,8 @@
+[
+  {"name": "entrance_hall", "title": "エントランスホール (aist_entrance_hall_1)",
+   "credit": "映像: AIST / stella_vslam sample dataset aist_entrance_hall_1"},
+  {"name": "stairs", "title": "階段室 (aist_stairs_A_1)",
+   "credit": "映像: AIST / stella_vslam sample dataset aist_stairs_A_1"},
+  {"name": "living_lab", "title": "リビングラボ (aist_living_lab_1)",
+   "credit": "映像: AIST / stella_vslam sample dataset aist_living_lab_1"}
+]
