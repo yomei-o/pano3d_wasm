@@ -56,3 +56,7 @@ Drag to look around, WASD to move, Q/E to go down/up, mouse wheel to change spee
 ## Sample data
 
 `aist_living_lab_1` from the stella_vslam tutorial: RICOH THETA S, 1920×960 equirect, 136 s.
+
+## License
+
+MIT (`LICENSE`). Bundled `third_party/stb` is public domain / MIT; COLMAP and FFmpeg are not bundled.
