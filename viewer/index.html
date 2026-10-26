@@ -19,9 +19,11 @@
   #ui button { margin: 2px 4px 2px 0; }
   #stats, .help { color: var(--muted); }
   .help { margin-top: 6px; line-height: 1.5; }
-  .only3d[hidden] { display: none; }
+  [hidden] { display: none !important; }
   #mapbox { right: 12px; bottom: 12px; padding: 6px; }
   #map { display: block; width: 220px; height: 220px; cursor: pointer; }
+  #credit { margin-top: 6px; color: var(--muted); font-size: 11px; }
+  #credit:empty { display: none; }
   @media (max-width: 600px) { #map { width: 140px; height: 140px; } }
 </style>
 </head>
@@ -29,6 +31,7 @@
 <canvas id="c"></canvas>
 <div id="ui" class="panel">
   <div id="stats">loading…</div>
+  <label id="scenepick" hidden>シーン <select id="scenesel"></select></label>
   <div><button id="mode">3D 点群にする</button></div>
   <label>位置 <input id="track" type="range" min="0" max="0" value="0"></label>
   <label>解像度 <input id="res" type="range" min="0.25" max="1" step="0.05" value="0.75"></label>
@@ -40,6 +43,7 @@
     <button id="overview">俯瞰</button><button id="side">側面</button>
   </div>
   <div class="help" id="help"></div>
+  <div id="credit"></div>
 </div>
 <div id="mapbox" class="panel"><canvas id="map" width="440" height="440"></canvas></div>
 <script>
@@ -48,7 +52,9 @@ const ctx = canvas.getContext('2d');
 const stats = document.getElementById('stats');
 const params = new URLSearchParams(location.search);
 // ?scene=NAME loads NAME/scene.p3d, NAME/scene.p3d.json and NAME/pano/*.jpg.
-const sceneDir = params.get('scene') || 'scene';
+// An optional scenes.json ([{name, title, credit}]) lists scenes for a picker
+// and supplies the default.
+let sceneDir = params.get('scene');
 
 const HELP = {
   pano: 'ドラッグ: 見回す / ホイール: ズーム<br>W S A D・クリック: その方向の撮影位置へ移動<br>右下の地図クリック: その場所へ',
@@ -62,6 +68,25 @@ var Module = {
 
 async function start() {
   const M = Module;
+  let scenes = [];
+  try {
+    const r = await fetch('scenes.json');
+    if (r.ok) scenes = await r.json();
+  } catch (e) { /* single-scene deployment */ }
+  if (!sceneDir) sceneDir = scenes.length ? scenes[0].name : 'scene';
+  if (scenes.length > 1) {
+    const sel = document.getElementById('scenesel');
+    for (const sc of scenes) sel.add(new Option(sc.title || sc.name, sc.name, false, sc.name === sceneDir));
+    sel.addEventListener('change', () => {
+      const q = new URLSearchParams(location.search);
+      q.set('scene', sel.value);
+      q.delete('pos');
+      location.search = q.toString();
+    });
+    document.getElementById('scenepick').hidden = false;
+  }
+  const info = scenes.find(sc => sc.name === sceneDir);
+  if (info && info.credit) document.getElementById('credit').textContent = info.credit;
   const res = await fetch(`${sceneDir}/scene.p3d`);
   if (!res.ok) { stats.textContent = `failed to load ${sceneDir}: ${res.status}`; return; }
   const bytes = new Uint8Array(await res.arrayBuffer());
