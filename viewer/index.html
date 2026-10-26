@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pano3d viewer</title>
+<style>
+  :root { --bg: #1a1c20; --fg: #e6e6e6; --muted: #9aa0a6; --panel: rgba(20,22,26,.82); }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+               font: 13px system-ui, sans-serif; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%;
+           image-rendering: pixelated; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #ui { position: fixed; left: 12px; top: 12px; padding: 10px 12px; border-radius: 8px;
+        background: var(--panel); max-width: calc(100vw - 48px); }
+  #ui label { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+  #ui input[type=range] { flex: 1; min-width: 120px; }
+  #ui button { margin: 2px 4px 2px 0; }
+  #stats, .help { color: var(--muted); }
+  .help { margin-top: 6px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="stats">loading…</div>
+  <label>位置 <input id="track" type="range" min="0" max="0" value="0"></label>
+  <label>点サイズ <input id="psize" type="range" min="0.5" max="4" step="0.1" value="1.5"></label>
+  <label>解像度 <input id="res" type="range" min="0.25" max="1" step="0.05" value="0.5"></label>
+  <label>操作中の点数 <input id="budget" type="range" min="100000" max="4000000" step="100000" value="600000"></label>
+  <label><input id="edl" type="checkbox" checked> EDL 陰影</label>
+  <button id="overview">俯瞰</button><button id="start">撮影位置へ</button>
+  <div class="help">ドラッグ: 視点 / WASD: 移動 / Q E: 上下<br>ホイール: 移動速度 / Shift: 速く</div>
+</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const stats = document.getElementById('stats');
+const params = new URLSearchParams(location.search);
+const sceneUrl = params.get('scene') || 'scene.p3d';
+
+var Module = {
+  onRuntimeInitialized: start,
+  print: t => console.log(t), printErr: t => console.error(t),
+};
+
+async function start() {
+  const M = Module;
+  const res = await fetch(sceneUrl);
+  if (!res.ok) { stats.textContent = `failed to load ${sceneUrl}: ${res.status}`; return; }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const ptr = M._p3d_alloc(bytes.length);
+  M.HEAPU8.set(bytes, ptr);
+  const npts = M._p3d_load(ptr, bytes.length);
+  M._p3d_free(ptr);
+  if (npts < 0) { stats.textContent = 'invalid scene file'; return; }
+
+  const ntrack = M._p3d_track_count();
+  const track = document.getElementById('track');
+  track.max = Math.max(0, ntrack - 1);
+  // Scene units are arbitrary (SfM has no scale); derive speed from point spacing.
+  let speed = M._p3d_scene_scale() * 40;
+
+  let w = 0, h = 0, image = null;
+  function resize() {
+    const scale = parseFloat(document.getElementById('res').value);
+    const nw = Math.max(64, Math.round(innerWidth * scale));
+    const nh = Math.max(64, Math.round(innerHeight * scale));
+    if (nw === w && nh === h) return;
+    w = nw; h = nh;
+    canvas.width = w; canvas.height = h;
+    M._p3d_resize(w, h);
+    image = ctx.createImageData(w, h);
+  }
+
+  const keys = new Set();
+  addEventListener('keydown', e => keys.add(e.code));
+  addEventListener('keyup', e => keys.delete(e.code));
+  addEventListener('blur', () => keys.clear());
+  addEventListener('resize', () => { resize(); touch(); });
+  addEventListener('wheel', e => { speed *= e.deltaY < 0 ? 1.2 : 1 / 1.2; e.preventDefault(); },
+                   { passive: false });
+
+  let drag = null;
+  canvas.addEventListener('pointerdown', e => {
+    drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const k = 0.004;
+    M._p3d_look(-(e.clientX - drag.x) * k, -(e.clientY - drag.y) * k);
+    touch();
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  canvas.addEventListener('pointerup', () => { drag = null; });
+  canvas.addEventListener('pointercancel', () => { drag = null; });
+
+  track.addEventListener('input', () => { M._p3d_goto_track(+track.value); touch(); });
+  document.getElementById('psize').addEventListener('input',
+      e => { M._p3d_set_point_scale(+e.target.value); touch(); });
+  document.getElementById('res').addEventListener('input', () => { resize(); touch(); });
+  document.getElementById('edl').addEventListener('change',
+      e => { M._p3d_set_edl(e.target.checked ? 1 : 0); touch(); });
+  document.getElementById('overview').addEventListener('click', () => { M._p3d_overview(); touch(); });
+  document.getElementById('start').addEventListener('click',
+      () => { M._p3d_goto_track(+track.value); touch(); });
+
+  // Render on demand: a point budget while the view changes, then one
+  // full-quality frame once it has been still for a moment.
+  const budget = document.getElementById('budget');
+  let lastChange = performance.now(), fullDone = false;
+  function touch() { lastChange = performance.now(); fullDone = false; }
+
+  resize();
+  let last = performance.now(), renderMs = 0, mode = '';
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    const v = speed * dt * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4 : 1);
+    const f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+    const s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+    const u = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);
+    if (f || s || u) { M._p3d_move(f * v, s * v, u * v); touch(); }
+
+    const still = now - lastChange > 200;
+    if (!fullDone) {
+      const t0 = performance.now();
+      const px = M._p3d_render(still ? 0 : +budget.value);
+      // HEAPU8 must be re-read each frame: memory growth replaces the buffer.
+      image.data.set(M.HEAPU8.subarray(px, px + w * h * 4));
+      ctx.putImageData(image, 0, 0);
+      renderMs = performance.now() - t0;
+      mode = still ? '全点' : '間引き';
+      fullDone = still;
+      stats.textContent = `${npts.toLocaleString()} 点 · ${w}×${h} · ${mode} 描画 ${renderMs.toFixed(1)} ms`;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+</script>
+<script src="viewer.js"></script>
+</body>
+</html>

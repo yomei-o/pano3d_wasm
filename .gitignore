@@ -1,0 +1,7 @@
+build/
+dist/
+work/
+data/
+colmap/
+*.p3d
+*.ply
