@@ -1,6 +1,11 @@
 # pano3d
 
-360° (or VR180) video → 3D reconstruction offline on a GPU → point-cloud viewer in the browser via WebAssembly. The viewer rasterises in software on a 2D canvas, so it needs neither WebGL nor WebGPU.
+360° (or VR180) video → 3D reconstruction offline on a GPU → walkthrough viewer in the browser via WebAssembly. The viewer rasterises in software on a 2D canvas, so it needs neither WebGL nor WebGPU.
+
+The viewer has two modes that share one camera:
+
+- **Photo mode (default)**: at each capture position, the original 360° frame is reprojected to the current view direction. You move between capture positions in the direction you are facing, like a Matterport tour. The reconstructed poses provide the positions, orientations and minimap.
+- **3D point cloud**: the dense MVS cloud with free movement, an overview from above and a side view.
 
 ```
 video.mp4 (equirect)
@@ -14,9 +19,12 @@ COLMAP 4.x (CUDA)       feature_extractor → rig_configurator → sequential_ma
 COLMAP MVS (CUDA)       image_deleter (every Nth frame) → image_undistorter
   │                     → patch_match_stereo → stereo_fusion
   ▼
-ply2scene [C++]         gravity alignment, voxel downsample, shuffle → scene.p3d
+ply2scene [C++]         gravity alignment, density filter, voxel downsample, shuffle
+  │                     → scene.p3d (+ scene.p3d.json: per-frame position and rotation)
   ▼
-viewer    [C++ → wasm]  software point splatting + EDL, on a 2D canvas
+make_web                scene + registered frames as JPEG → dist/<name>/
+  ▼
+viewer    [C++ → wasm]  photo mode: equirect reprojection; 3D mode: point splatting + EDL
 ```
 
 ## Existing components used as-is
@@ -31,7 +39,7 @@ viewer    [C++ → wasm]  software point splatting + EDL, on a 2D canvas
 ## Layout
 
 - `tools/pano2rig.cpp`: renders pinhole views from equirect frames. `--vr180` handles 180° video. Writes COLMAP rig_config.json with known poses and intrinsics, quaternions in [w,x,y,z] order.
-- `tools/ply2scene.cpp`: converts PLY plus images.txt to the viewer format (P3D1, defined in `viewer/renderer.h`).
+- `tools/ply2scene.cpp`: converts PLY plus images.txt to the viewer format (P3D1, defined in `viewer/renderer.h`), and writes `scene.p3d.json` with each capture position and its pano_from_viewer rotation.
 - `viewer/renderer.*`: software renderer shared by wasm and native builds.
 - `viewer/wasm_main.cpp`, `viewer/index.html`: browser viewer.
 - `viewer/render_png.cpp`: native harness that renders the same renderer to PNG (for headless checks and benchmarks).
@@ -46,14 +54,19 @@ scripts\build_tools.bat                 :: MSVC: pano2rig / ply2scene / render_p
 scripts\build_wasm.bat                  :: emsdk: dist\viewer.{js,wasm}, index.html
 powershell -File scripts\run_sfm.ps1   -Video data\x\video.mp4 -Work work\x  [-VR180]
 powershell -File scripts\run_dense.ps1 -Work work\x  [-Stride 4] [-MaxSize 640]
-powershell -File scripts\browser_shot.ps1 -Scene work\x\scene.p3d   :: headless Edge with GPU off
+powershell -File scripts\make_web.ps1  -Work work\x -Name x   :: dist\x\{scene.p3d, scene.p3d.json, pano\*.jpg}
+powershell -File scripts\browser_shot.ps1 -Query "scene=x&pos=60"  :: headless Edge with GPU off
 ```
 
-To view it, copy `dist/` and `scene.p3d` to any static file server. A different scene file can be loaded with `index.html?scene=foo.p3d`.
+To view the result, put `dist/` on any static file server and open `index.html?scene=x`. Other URL parameters: `pos=K` starts at capture position K, `mode=3d` starts in point-cloud mode.
 
 ## Viewer controls
 
-Drag to look around, WASD to move, Q/E to go down/up, mouse wheel to change speed, Shift to move faster. The "位置" (position) slider jumps to a capture position; "俯瞰" (overview) looks down with the ceiling cut away, and "側面" (side) looks at the whole scene from the side (useful for multi-floor scenes). While the camera moves, only the number of points set by "操作中の点数" (points while moving) is drawn. Once the camera stops, the full cloud is drawn once (on-demand rendering).
+Photo mode: drag to look around, wheel to zoom. W/S/A/D or a click moves to the next capture position forward, back, left or right of the view. Click the minimap (bottom right) to jump to the nearest capture position.
+
+3D mode: drag to look around, WASD to move, Q/E to go down/up, wheel to change speed, Shift to move faster. "俯瞰" (overview) looks down with the ceiling cut away. "側面" (side) shows the whole scene from the side, which helps with multi-floor scenes. While the camera moves, only the number of points set by "操作中の点数" (points while moving) is drawn. Once the camera stops, the full cloud is drawn once.
+
+In both modes the "位置" (position) slider jumps to a capture position, and switching modes keeps the viewpoint.
 
 ## Sample data
 
