@@ -60,6 +60,16 @@ powershell -File scripts\browser_shot.ps1 -Query "scene=x&pos=60"  :: headless E
 
 To view the result, put `dist/` on any static file server and open `index.html?scene=x`. Other URL parameters: `pos=K` starts at capture position K, `mode=3d` starts in point-cloud mode.
 
+## Gaussian Splatting (SPZ)
+
+`scripts\run_splat.ps1 -Work work\x` turns the SfM result into a 3D Gaussian Splatting model:
+
+1. The COLMAP model is gravity-aligned into RDF axes (x right, y down, z forward), centred on the capture path. `ply2scene --write-sim3` computes the alignment and `colmap model_transformer` applies it, so the splat comes out upright.
+2. [Brush](https://github.com/ArthurBrussee/brush) v0.3.0 (Apache-2.0, official Windows build, unzipped to `C:\prog\brush`) trains on the 8 virtual pinhole views per frame. It runs on the GPU through wgpu, so no CUDA toolkit is needed. By default every 10th image is held out, and renders of those views are saved to `splat\eval_<steps>\`.
+3. `tools/ply2spz.cpp` writes Niantic's [SPZ](https://github.com/nianticlabs/spz) (MIT, fetched by CMake), tagged RDF, and reads the file back to check it.
+
+aist_entrance_hall_1, 30k steps on the RTX 3090: 10 minutes, 1.75M gaussians, 413 MB PLY → 43 MB SPZ.
+
 ## Viewer controls
 
 Photo mode: drag to look around, wheel to zoom. W/S/A/D or a click moves to the next capture position forward, back, left or right of the view. Click the minimap (bottom right) to jump to the nearest capture position.

@@ -2,12 +2,16 @@
 // scene file for the viewer (format in viewer/renderer.h).
 //
 //   ply2scene <points.ply> <images.txt> <out.p3d> [--voxel SIZE] [--ref cam0/]
-//             [--min-neighbors N]
+//             [--min-neighbors N] [--write-sim3 PATH]
 //
 // The cloud is rotated so the mean camera "up" becomes +Y and translated so
 // the camera path is centred on the origin. --voxel 0 keeps every point; the
 // default picks a size from the cloud extent. --min-neighbors 0 disables the
 // density filter that removes stray MVS points.
+//
+// --write-sim3 also writes the same gravity alignment as a COLMAP Sim3d
+// ("scale qw qx qy qz tx ty tz", for `colmap model_transformer`), but into
+// RDF axes (x right, y down, z forward) as splat formats such as SPZ expect.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -21,6 +25,36 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// Rotation matrix -> quaternion (w, x, y, z), COLMAP's order.
+static void rotation_to_quat(const double R[3][3], double q[4]) {
+  const double t = R[0][0] + R[1][1] + R[2][2];
+  if (t > 0) {
+    const double s = std::sqrt(t + 1.0) * 2;
+    q[0] = 0.25 * s;
+    q[1] = (R[2][1] - R[1][2]) / s;
+    q[2] = (R[0][2] - R[2][0]) / s;
+    q[3] = (R[1][0] - R[0][1]) / s;
+  } else if (R[0][0] > R[1][1] && R[0][0] > R[2][2]) {
+    const double s = std::sqrt(1.0 + R[0][0] - R[1][1] - R[2][2]) * 2;
+    q[0] = (R[2][1] - R[1][2]) / s;
+    q[1] = 0.25 * s;
+    q[2] = (R[0][1] + R[1][0]) / s;
+    q[3] = (R[0][2] + R[2][0]) / s;
+  } else if (R[1][1] > R[2][2]) {
+    const double s = std::sqrt(1.0 + R[1][1] - R[0][0] - R[2][2]) * 2;
+    q[0] = (R[0][2] - R[2][0]) / s;
+    q[1] = (R[0][1] + R[1][0]) / s;
+    q[2] = 0.25 * s;
+    q[3] = (R[1][2] + R[2][1]) / s;
+  } else {
+    const double s = std::sqrt(1.0 + R[2][2] - R[0][0] - R[1][1]) * 2;
+    q[0] = (R[1][0] - R[0][1]) / s;
+    q[1] = (R[0][2] + R[2][0]) / s;
+    q[2] = (R[1][2] + R[2][1]) / s;
+    q[3] = 0.25 * s;
+  }
+}
 
 struct Cloud {
   std::vector<float> xyz;
@@ -156,17 +190,18 @@ int main(int argc, char** argv) {
   if (argc < 4) {
     std::fprintf(stderr,
                  "usage: ply2scene <points.ply> <images.txt> <out.p3d> [--voxel SIZE]"
-                 " [--ref cam0/]\n");
+                 " [--ref cam0/] [--min-neighbors N] [--write-sim3 PATH]\n");
     return 1;
   }
   double voxel = -1;
   int min_neighbors = 30;
-  std::string ref = "cam0/";
+  std::string ref = "cam0/", sim3_path;
   for (int a = 4; a < argc; ++a) {
     const std::string s = argv[a];
     if (s == "--voxel" && a + 1 < argc) voxel = std::atof(argv[++a]);
     else if (s == "--ref" && a + 1 < argc) ref = argv[++a];
     else if (s == "--min-neighbors" && a + 1 < argc) min_neighbors = std::atoi(argv[++a]);
+    else if (s == "--write-sim3" && a + 1 < argc) sim3_path = argv[++a];
   }
   Cloud cloud;
   if (!read_ply(argv[1], cloud)) {
@@ -199,6 +234,23 @@ int main(int argc, char** argv) {
     out[1] = static_cast<float>(d[0] * up[0] + d[1] * up[1] + d[2] * up[2]);
     out[2] = static_cast<float>(d[0] * ez[0] + d[1] * ez[1] + d[2] * ez[2]);
   };
+
+  if (!sim3_path.empty()) {
+    // Rows (ex, -up, -ez): y down and still right-handed. new = R (p - origin).
+    const double R[3][3] = {{ex[0], ex[1], ex[2]},
+                            {-up[0], -up[1], -up[2]},
+                            {-ez[0], -ez[1], -ez[2]}};
+    double q[4];
+    rotation_to_quat(R, q);
+    double t[3];
+    for (int r = 0; r < 3; ++r)
+      t[r] = -(R[r][0] * origin[0] + R[r][1] * origin[1] + R[r][2] * origin[2]);
+    FILE* sf = std::fopen(sim3_path.c_str(), "w");
+    if (!sf) return 1;
+    std::fprintf(sf, "1 %.12f %.12f %.12f %.12f %.12f %.12f %.12f\n", q[0], q[1], q[2], q[3],
+                 t[0], t[1], t[2]);
+    std::fclose(sf);
+  }
 
   size_t count = cloud.rgb.size() / 3;
   std::vector<float> pts(count * 3);

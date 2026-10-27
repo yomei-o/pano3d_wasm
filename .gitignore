@@ -5,3 +5,5 @@ data/
 colmap/
 *.p3d
 *.ply
+splat/
+build_fc/
