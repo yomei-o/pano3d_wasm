@@ -40,3 +40,13 @@ if(TARGET zlib)
   add_custom_command(TARGET ply2spz POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:zlib> $<TARGET_FILE_DIR:ply2spz>)
 endif()
+
+# CPU Gaussian Splatting renderer for flythrough videos (frames go to ffmpeg).
+find_package(OpenMP REQUIRED)
+add_executable(splat_video tools/splat_video.cpp)
+target_include_directories(splat_video PRIVATE third_party/stb)
+target_link_libraries(splat_video PRIVATE spz::spz OpenMP::OpenMP_CXX)
+if(TARGET zlib)
+  add_custom_command(TARGET splat_video POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:zlib> $<TARGET_FILE_DIR:splat_video>)
+endif()

@@ -70,6 +70,15 @@ To view the result, put `dist/` on any static file server and open `index.html?s
 
 aist_entrance_hall_1, 30k steps on the RTX 3090: 10 minutes, 1.75M gaussians, 413 MB PLY → 43 MB SPZ.
 
+`tools/splat_video.cpp` renders the splat on the CPU (OpenMP; the reference 3DGS forward pass with tiles, depth sort and SH degree 3) along the smoothed capture path, looking level in the direction of travel. It pipes the frames to ffmpeg, so it needs no GPU and no viewer:
+
+```bat
+colmap model_converter --input_path work\x\splat_dataset\sparse\0 --output_path work\x\splat_txt --output_type TXT
+build\splat_video.exe work\x\splat\splat.spz work\x\splat_txt\images.txt out.mp4 --speed 1.5 --ffmpeg C:\ffmpeg\ffmpeg.exe
+```
+
+`--frame T out.png` renders a single frame instead. At 1280×720 a frame of the 1.75M-gaussian hall takes about 2.2 s on the build machine's 20 threads.
+
 ## Viewer controls
 
 Photo mode: drag to look around, wheel to zoom. W/S/A/D or a click moves to the next capture position forward, back, left or right of the view. Click the minimap (bottom right) to jump to the nearest capture position.
