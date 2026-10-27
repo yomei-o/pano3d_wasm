@@ -3,12 +3,13 @@
 //
 //   splat_video <splat.spz|.ply> <images.txt> <out.mp4> [--size 1280x720]
 //               [--fov 80] [--fps 30] [--speed 1] [--ref cam0/]
-//               [--ffmpeg PATH] [--frame T out.png]
+//               [--from T0] [--to T1] [--ffmpeg PATH] [--frame T out.png]
 //
 // images.txt is the text export of the aligned COLMAP model the splat was
 // trained on (RDF axes, y down). The camera follows the --ref views'
 // centres, smoothed, looking level along the direction of travel. --speed 1
 // plays the path at capture speed (3 frames per second of video).
+// --from/--to limit the video to part of the path, in capture frames.
 // --frame T renders a single PNG at path time T (in capture frames).
 //
 // The rasteriser follows the reference 3DGS forward pass: EWA projection with
@@ -371,12 +372,12 @@ int main(int argc, char** argv) {
   if (argc < 4) {
     std::fprintf(stderr,
                  "usage: splat_video <splat.spz|.ply> <images.txt> <out.mp4> [--size WxH] "
-                 "[--fov DEG] [--fps N] [--speed S] [--ref cam0/] [--ffmpeg PATH] "
+                 "[--fov DEG] [--fps N] [--speed S] [--ref cam0/] [--from T0] [--to T1] [--ffmpeg PATH] "
                  "[--frame T out.png]\n");
     return 1;
   }
   int w = 1280, h = 720, fps = 30;
-  float fov = 80, speed = 1, single = -1;
+  float fov = 80, speed = 1, single = -1, from = 0, to = -1;
   std::string ref = "cam0/", ffmpeg = "ffmpeg", png;
   for (int i = 4; i < argc; ++i) {
     const std::string a = argv[i];
@@ -386,6 +387,8 @@ int main(int argc, char** argv) {
     else if (a == "--fps") fps = std::atoi(next());
     else if (a == "--speed") speed = float(std::atof(next()));
     else if (a == "--ref") ref = next();
+    else if (a == "--from") from = float(std::atof(next()));
+    else if (a == "--to") to = float(std::atof(next()));
     else if (a == "--ffmpeg") ffmpeg = next();
     else if (a == "--frame") single = float(std::atof(next())), png = next();
     else {
@@ -419,7 +422,10 @@ int main(int argc, char** argv) {
 
   // The capture path is sampled at 3 frames per second.
   const float capture_fps = 3;
-  const int frames = int((centres.size() - 1) / capture_fps / speed * fps) + 1;
+  const float last_t = float(centres.size() - 1);
+  from = std::clamp(from, 0.0f, last_t);
+  to = to < 0 ? last_t : std::clamp(to, from, last_t);
+  const int frames = std::max(2, int((to - from) / capture_fps / speed * fps) + 1);
   const std::string cmd = "\"" + ffmpeg + "\" -y -loglevel error -f rawvideo -pix_fmt rgb24 -s " +
                           std::to_string(w) + "x" + std::to_string(h) + " -r " +
                           std::to_string(fps) +
@@ -436,7 +442,7 @@ int main(int argc, char** argv) {
   }
   const auto t1 = std::chrono::steady_clock::now();
   for (int k = 0; k < frames; ++k) {
-    const float t = float(k) / (frames - 1) * float(centres.size() - 1);
+    const float t = from + float(k) / (frames - 1) * (to - from);
     raster.render(model, path.view(t, w, h, fov), rgb);
     if (std::fwrite(rgb.data(), 1, rgb.size(), pipe) != rgb.size()) {
       std::fprintf(stderr, "ffmpeg pipe closed at frame %d\n", k);
